@@ -17,7 +17,7 @@ def Property(func):
 
 class Maze:
 	SQUARE_SIZE = 50.0
-	def __init__(self, fname):
+	def __init__(self, fname, beaconCount):
 		self.map = []
 		lines = open(fname).read().splitlines()
 		for l in lines:
@@ -27,6 +27,13 @@ class Maze:
 					self.map[-1].append(True)
 				else:
 					self.map[-1].append(False)
+		# initialize random beacons
+		self.beacons = []
+		for i in range(beaconCount):
+			x = random.randint(0, self.totalWidth())
+			y = random.randint(0, self.totalHeight())
+			self.beacons.append((x, y))
+
 	def width(self):
 		return len(self.map)
 	def height(self):
@@ -61,9 +68,22 @@ class Maze:
 		squareCheck = self.map[sx][sy]
 		return squareCheck
 
+	def distFromBeacon(self, p):
+		"""
+			Gives distance from p to the closest beacon
+		"""
+		minDist2 = 100500
+		for beacon in self.beacons:
+			dx = p[0] - beacon[0]
+			dy = p[1] - beacon[1]
+			dst2 = dx**2 + dy**2
+			if dst2 < minDist2:
+				minDist2 = dst2
+		return np.sqrt(minDist2)
+
 
 class Robot(Particle):
-	STEP_SIZE = Maze.SQUARE_SIZE / 25.0
+	STEP_SIZE = Maze.SQUARE_SIZE / 10.0
 
 	def __init__(self, params, constParams, w=1, noisy=False, noiseFunc=None):
 		if noisy and noiseFunc is None:
@@ -73,6 +93,7 @@ class Robot(Particle):
 		self.w = w
 		#robot-specific fields further
 		self.lastPointFree = True
+		self.distFromBeacon = self.maze.distFromBeacon(self.p)
 
 	@Property
 	def params():
@@ -122,6 +143,7 @@ class Robot(Particle):
 				deltaAngle = newAngle - self.angle
 				self.angle += deltaAngle
 			self.lastPointFree = False
+		self.distFromBeacon = self.maze.distFromBeacon(self.p)
 		return deltaAngle
 				
 
@@ -137,15 +159,23 @@ def maze2draw(point):
 def draw(img, robot, pp):
 	img[:,:] = 0
 	maze = robot.maze
+	#draw maze
 	for x in range(maze.width()):
 		for y in range(maze.height()):
 			if maze.map[x][y]:
 				p1 = (y*SQUARE_SIZE_PX, x*SQUARE_SIZE_PX)
 				p2 = ((y+1)*SQUARE_SIZE_PX, (x+1)*SQUARE_SIZE_PX)
 				cv2.rectangle(img, p1, p2, (255,255,255), -1)
+	#draw beacons
+	for b in maze.beacons:
+		p = maze2draw(b)
+		p = (int(p[0]), int(p[1]))
+		cv2.circle(img, p, 3, (179, 30, 171), -1)
+	#draw robot
 	pnt = maze2draw(robot.p)
 	pnt = (int(pnt[0]), int(pnt[1]))
 	cv2.circle(img, pnt, 5, (0,0,255), -1)
+	#draw particles
 	for p in pp:
 		mazePoint = (p.params[0], p.params[1])
 		pnt = maze2draw(mazePoint)
@@ -153,27 +183,29 @@ def draw(img, robot, pp):
 
 
 def main():
-	maze = Maze('maze.txt')
+	maze = Maze('maze.txt', 10)
 
 	def rndParams():
 		x, y = maze.randomFreePlace()
 		angle = uni(0, 2*np.pi)
 		return [x, y, angle]
-	nlimit = Robot.STEP_SIZE / 3.0
+	nlimit = Robot.STEP_SIZE / 10.0
 	def noiser(params):
 		x = params[0] + uni(-nlimit, nlimit)
 		y = params[1] + uni(-nlimit, nlimit)
-		angle = params[2] + uni(-np.pi/20, np.pi/20)
+		angle = params[2] + uni(-np.pi/100, np.pi/100)
 		return [x, y, angle]
 	def error(p, inputData):
 		"""p is a particle, inputData equals to robot's 'lastPointFree' field after acting"""
-		coeff = 0 if p.lastPointFree == inputData else 1
-		return coeff * 100500
+		robotLastPointFree = inputData[0]
+		robotDistFromBeacon = inputData[1]
+		wallBumpingError = 0 if p.lastPointFree == robotLastPointFree else 1
+		beaconDistError = (p.distFromBeacon - robotDistFromBeacon)**2
+		return wallBumpingError * 100500 + beaconDistError
 	
-
 	
 	paul = Robot(rndParams(), maze)
-	pf = PFilter(2000, 1000**2, paul.constParams, rndParams, error, noiser, Robot)
+	pf = PFilter(2000, 500**2, paul.constParams, rndParams, error, noiser, Robot)
 
 
 	cv2.namedWindow(winname, cv2.CV_WINDOW_AUTOSIZE)
@@ -185,17 +217,17 @@ def main():
 
 	while True:
 		random.seed(time.time())
-		print 'Paul moves'
+		#print 'Paul moves'
 		deltaAngle = paul.act()
-		res = pf.step(deltaAngle, paul.lastPointFree)
-		print 'step done...'
+		res = pf.step(deltaAngle, [paul.lastPointFree, paul.distFromBeacon])
+		#print 'step done...'
 
 
 		draw(img, paul, pf.particles)
 		cv2.imshow(winname, img)
-		print 'wait...'
+		#print 'wait...'
 		cv2.waitKey(15)
-		print 'continue'
+		#print 'continue'
 
 	cv2.waitKey(0)
 	return
