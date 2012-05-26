@@ -12,6 +12,9 @@ SQUARE_SIZE_PX = 100
 winname = 'Maze'
 maze = None
 
+def Property(func):
+	return property(**func())
+
 class Maze:
 	SQUARE_SIZE = 50.0
 	def __init__(self, fname):
@@ -28,60 +31,102 @@ class Maze:
 		return len(self.map)
 	def height(self):
 		return max([len(row) for row in self.map])
-	def total_width(self):
+	def totalWidth(self):
 		return self.width() * self.SQUARE_SIZE
-	def total_height(self):
+	def totalHeight(self):
 		return self.height() * self.SQUARE_SIZE
 	def square(self, p):
 		x = p[0] // self.SQUARE_SIZE
 		y = p[1] // self.SQUARE_SIZE
 		return int(x), int(y)
 
-	def random_place(self):
-		return uni(0, self.total_width()), uni(0, self.total_height())
-	def random_free_place(self):
+	def randomPlace(self):
+		return uni(0, self.totalWidth()), uni(0, self.totalHeight())
+	def randomFreePlace(self):
 		while True:
-			res = self.random_place()
-			if self.is_free(res):
+			res = self.randomPlace()
+			if self.isFree(res):
 				return res
 
-	def is_free(self, p):
+	def isFree(self, p):
 		"""
 			Determines whether current point p is empty or does it contain wall.
 		"""
-		maxx = self.total_width()
-		maxy = self.total_height()
+		maxx = self.totalWidth()
+		maxy = self.totalHeight()
 		sx, sy = self.square(p)
-		print 'sx, sy == ', (sx, sy)
-		bounds_check = p[0] >= 0 and p[1] >= 0 and p[0] < maxx and p[1] < maxy
-		if not bounds_check:
+		boundsCheck = p[0] >= 0 and p[1] >= 0 and p[0] < maxx and p[1] < maxy
+		if not boundsCheck:
 			return False
-		square_check = self.map[sx][sy]
-		return square_check
+		squareCheck = self.map[sx][sy]
+		return squareCheck
 
-		
 
-class Robot:
-	STEP_SIZE = Maze.SQUARE_SIZE / 10.0
-	def __init__(self, p, maze):
-		self.p = p
-		self.maze = maze
-	def move(self):
+class Robot(Particle):
+	STEP_SIZE = Maze.SQUARE_SIZE / 25.0
+
+	def __init__(self, params, constParams, w=1, noisy=False, noiseFunc=None):
+		if noisy and noiseFunc is None:
+			raise ValueError('Particle that is noisy requires it''s ''noiseFunc'' parameter not to be None')
+		self.params = params if not noisy else noiseFunc(params)
+		self.constParams = constParams
+		self.w = w
+		#robot-specific fields further
+		self.lastPointFree = True
+
+	@Property
+	def params():
+		doc = 'Constructs parameter list from attributes and update attributes given the parameter list'
+		def fget(self):
+			return [self.p[0], self.p[1], self.angle]
+		def fset(self, value):
+			if len(value) != 3:
+				raise ValueError('Setter of "params" property expects length of the list to be exactly 3')
+			self.p = (value[0], value[1])
+			self.angle = value[2]
+		fdel = None
+		return locals()
+	@Property
+	def constParams():
+		doc = 'Like "params" property, but deals with parameters that shouldn''t be optimized by PFilter.'
+		def fget(self):
+			return self.maze
+		def fset(self, val):
+			self.maze = val
+		fdel = None
+		return locals()
+
+	def act(self, actionParams=None):
 		"""
-			Moves robot by STEP_SIZE in random direction.
+		Moves robot/particle in direction denoted by self.angle by STEP_SIZE.
+		If there is a wall on the way, robot stays where he is and sets
+		self.lastPointFree to False, otherwise sets it to True.
+		It returns (dx, dy) where he wanted to move,
+		no matter did he actually go there or not.
+		actionParams parameter is not currently used.
 		"""
-		x, y = self.p
-		angle = 2 * np.pi * uni(0, 1)
-		x += self.STEP_SIZE * np.sin(angle)
-		y += self.STEP_SIZE * np.cos(angle)
-		dx = dy = 0
-		if self.maze.is_free((x, y)):
-			dx = x - self.p[0]
-			dy = y - self.p[1]
+		dx = self.STEP_SIZE * np.sin(self.angle)
+		dy = self.STEP_SIZE * np.cos(self.angle)
+		x, y = (self.p[0] + dx, self.p[1] + dy)
+		deltaAngle = 0
+		if self.maze.isFree((x, y)):
 			self.p = x, y
+			self.lastPointFree = True
 		else:
-			pass
-		return (x, y), (dx, dy)
+			# change direction so that robot don't stick in the wall
+			if not actionParams is None:
+				deltaAngle = actionParams
+				self.angle += deltaAngle
+			else:
+				newAngle = uni(0, 2*np.pi)
+				deltaAngle = newAngle - self.angle
+				self.angle += deltaAngle
+			self.lastPointFree = False
+		return deltaAngle
+				
+
+			
+
 
 def maze2draw(point):
 	#x and y are swapped intentionally
@@ -89,8 +134,9 @@ def maze2draw(point):
 	x = point[1] / Maze.SQUARE_SIZE * SQUARE_SIZE_PX
 	return int(x), int(y)
 
-def draw(img, maze, robot, pp):
+def draw(img, robot, pp):
 	img[:,:] = 0
+	maze = robot.maze
 	for x in range(maze.width()):
 		for y in range(maze.height()):
 			if maze.map[x][y]:
@@ -101,27 +147,38 @@ def draw(img, maze, robot, pp):
 	pnt = (int(pnt[0]), int(pnt[1]))
 	cv2.circle(img, pnt, 5, (0,0,255), -1)
 	for p in pp:
-		maze_point = (p.params[0], p.params[1])
-		pnt = maze2draw(maze_point)
+		mazePoint = (p.params[0], p.params[1])
+		pnt = maze2draw(mazePoint)
 		cv2.circle(img, pnt, 2, (255,0,0), -1)
 
 
 def main():
 	maze = Maze('maze.txt')
-	paul = Robot(maze.random_free_place(), maze)
 
-	#particle filter setup
-	prec = Robot.STEP_SIZE
-	rnd_params = lambda: (uni(0, maze.total_width()), uni(0, maze.total_height()))
-	error = lambda p, free: 1.0 if maze.is_free((p.params[0], p.params[1])) == free else 0.0
+	def rndParams():
+		x, y = maze.randomFreePlace()
+		angle = uni(0, 2*np.pi)
+		return [x, y, angle]
 	nlimit = Robot.STEP_SIZE / 3.0
-	noiser = lambda (x, y): (x + uni(-nlimit, nlimit), y + uni(-nlimit, nlimit))
-	pf = PFilter(1500, 1000**2, (prec, prec), rnd_params, error, noiser)
+	def noiser(params):
+		x = params[0] + uni(-nlimit, nlimit)
+		y = params[1] + uni(-nlimit, nlimit)
+		angle = params[2] + uni(-np.pi/20, np.pi/20)
+		return [x, y, angle]
+	def error(p, inputData):
+		"""p is a particle, inputData equals to robot's 'lastPointFree' field after acting"""
+		coeff = 0 if p.lastPointFree == inputData else 1
+		return coeff * 100500
+	
+
+	
+	paul = Robot(rndParams(), maze)
+	pf = PFilter(2000, 1000**2, paul.constParams, rndParams, error, noiser, Robot)
 
 
 	cv2.namedWindow(winname, cv2.CV_WINDOW_AUTOSIZE)
 	img = np.zeros((maze.width() * SQUARE_SIZE_PX, maze.height() * SQUARE_SIZE_PX, 3), np.uint8)
-	draw(img, maze, paul, pf.particles)
+	draw(img, paul, pf.particles)
 	cv2.imshow(winname, img)
 	cv2.waitKey(0)
 
@@ -129,23 +186,17 @@ def main():
 	while True:
 		random.seed(time.time())
 		print 'Paul moves'
-		target_p, dp = paul.move()
-		target_is_free = (0, 0) == dp
-		print 'Paul moved by ', dp
-		res = pf.step(dp, target_is_free)
+		deltaAngle = paul.act()
+		res = pf.step(deltaAngle, paul.lastPointFree)
 		print 'step done...'
-		if res is None:
-			draw(img, maze, paul, pf.particles)
-			cv2.imshow(winname, img)
-			print 'wait...'
-			cv2.waitKey(500)
-			print 'continue'
-			continue
-		else:
-			draw(img, maze, pf.particles)
-			cv2.imshow(winname, img)
-			print 'res == ', res
-			break
+
+
+		draw(img, paul, pf.particles)
+		cv2.imshow(winname, img)
+		print 'wait...'
+		cv2.waitKey(15)
+		print 'continue'
+
 	cv2.waitKey(0)
 	return
 

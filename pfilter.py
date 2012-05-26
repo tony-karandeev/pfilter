@@ -1,90 +1,118 @@
 from exceptions import *
-import random as rnd
+import abc
+from random import uniform as uni
 import bisect
 import numpy as np
 
 
 class WeightedDistribution:
 	def __init__(self, items):
-		self.items = [item for item in items if item.w > 0];
-		total_weight = 0.0
+		self.items = [item for item in items if item.w > 0]
+		totalWeight = 0.0
 		self.distribution = []
 		for item in self.items:
-			total_weight += item.w
-			self.distribution.append(total_weight)
-		self.total_weight = total_weight
-
+			totalWeight += item.w
+			self.distribution.append(totalWeight)
+		self.totalWeight = totalWeight
 	def pick(self):
 		try:
-			idx = bisect.bisect_left(self.distribution, rnd.uniform(0, self.total_weight))
+			idx = bisect.bisect_left(self.distribution, uni(0, self.totalWeight))
 			return self.items[idx]
 		except IndexError:
 			# No items in distribution
 			return None
 
+class Particle(object):
+	@abc.abstractmethod
+	def __init__(self, params, constParams, w=1, noisy=False, noiseFunc=None):
+		pass
+	
+	@classmethod
+	def createRandom(cls, count, rndParamsFunc, constParams):
+		res = []
+		for i in range(count):
+			params = rndParamsFunc()
+			res.append(cls(params, constParams, w=1, noisy=False))
+		return res
 
-class Particle:
-	def __init__(self, params, w=1, noisy=False, add_noise=None):
-		if noisy and add_noise is None:
-			raise ValueError('Particle that is noisy requires it''s ''add_noise'' function not to be none')
-		self.params = np.array(params, np.float32)
-		if noisy:
-			add_noise(self.params)
-		self.w = w
+	def act(self, actionParams):
+		"""
+			This method shall be overriden if particle performs some action together with robot or what it is each step. If it doesn't, just leave this method as it is.
+		"""
+		pass
+		
 
-		@classmethod
-		def create_random(cls, count, random_params):
-			res = []
-			for i in range(count):
-				params = random_params()
-				res.append(cls(params, w=1, noisy=False))
-			return res
+	@abc.abstractproperty
+	def params(self):
+		"""
+			This property must get parameter list from child's attributes and set child's attributes given such a parameter list
+		"""
+		pass
+	
+	@abc.abstractproperty
+	def constParams():
+		"""Like 'params' property, but deals with parameters that shouldn't be optimised by PFilter."""
+
 
 class PFilter:
-	def __init__(self, pcount, sigma2, precisions, random_params, error_func):
-		self.PCOUNT = pcount
-		self.random_params = random_params
-		self.error = error_func
-		self.particles = Particle.create_random(self.PCOUNT, self.random_params)
+	def __init__(self, pcount, sigma2, constParams, rndParamsFunc, errorFunc, noiseFunc, particleClass):
+		if not issubclass(particleClass, Particle):
+			raise ValueError('"particleClass" parameter must be subclass of Particle')
+		self.pcount = pcount
 		self.sigma2 = sigma2
-		self.precisions = precisions
+		self.particleConstParams = constParams
+		self.randomParams = rndParamsFunc
+		self.error = errorFunc
+		self.addNoise = noiseFunc
+		self.particleClass = particleClass
+		self.particles = particleClass.createRandom(self.pcount, self.randomParams, self.particleConstParams)
 
-	def gauss(x):
+
+	def gauss(self, x):
 		return np.e ** -(x**2 / (2*self.sigma2))
-
-	def step(self, input_data=None):
+	
+	def step(self, actionParams=None, inputData=None):
 		for p in self.particles:
-				err = self.error(p, input_data)
-				p.w = float(gauss(err))
+			p.act(actionParams)
+			err = self.error(p, inputData)
+			p.w = self.gauss(err)
 
-		total_weight = sum(p.w for p in self.particles)
-		if 0 != total_weight:
-			for p in self.particles:
-				p.w /= total_weight
-
+		# with our implementation of WeightedDistribution
+		# we need not normalize weights
 		wdist = WeightedDistribution(self.particles)
-		new_particles = []
+		newParticles = []
 		for _ in self.particles:
 			p = wdist.pick()
 			if p is None:
-				new_p = Particle.create_random(1, self.random_params)[0]
+				newP = self.particleClass.createRandom(1, self.randomParams, self.particleConstParams)[0]
 			else:
-				new_p = Particle(p.params, w=1, noisy=True)
-			new_particles.append(new_p)
-			
-		new_params = np.array([p.params for p in new_particles], np.float32)
-		params_dev = np.std(new_params, dtype=np.float64)
-
-		if (False in [abs(diff) < abs(self.precisions) for diff in params_diff]):
-			self.particles = new_particles
-			return None
-		else:
-			return np.mean(new_params, axis=0, dtype=np.float64)
+				newP = self.particleClass(p.params, self.particleConstParams, w=1, noisy=True, noiseFunc=self.addNoise)
+			newParticles.append(newP)
+		self.particles = newParticles
+		return
 
 
-		
-		
-		
 
-		
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
