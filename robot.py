@@ -11,6 +11,7 @@ SQUARE_SIZE_PX = 100
 
 winname = 'Maze'
 maze = None
+oneDistanceOnly = False
 
 def Property(func):
 	return property(**func())
@@ -80,6 +81,13 @@ class Maze:
 			if dst2 < minDist2:
 				minDist2 = dst2
 		return np.sqrt(minDist2)
+	def distsFromBeacons(self, p):
+		return [(p[0]-b[0])**2 + (p[1]-b[1])**2 for b in self.beacons]
+	def sumDistFromBeacons(self, p):
+		"""
+			Gives sum of square distances from each beacon to p
+		"""
+		return sum(distsFromBeacons)
 
 
 class Robot(Particle):
@@ -143,7 +151,10 @@ class Robot(Particle):
 				deltaAngle = newAngle - self.angle
 				self.angle += deltaAngle
 			self.lastPointFree = False
-		self.distFromBeacon = self.maze.distFromBeacon(self.p)
+		if oneDistanceOnly:
+			self.distFromBeacon = self.maze.distFromBeacon(self.p)
+		else:
+			self.distsFromBeacons = self.maze.distsFromBeacons(self.p)
 		return deltaAngle
 				
 
@@ -183,7 +194,31 @@ def draw(img, robot, pp):
 
 
 def main():
-	maze = Maze('maze.txt', 10)
+	pcount = 2000
+	beaconCnt = 10
+	sigma = 500
+	mazefile = 'maze.txt'
+	
+	argcnt = len(sys.argv)
+	if argcnt < 2:
+		print 'Using particle count: %d' % pcount
+	else:
+		pcount = int(sys.argv[1])
+	if argcnt < 3:
+		print 'Using beacon count: %d' % beaconCnt
+	else:
+		beaconCnt = int(sys.argv[2])
+	if argcnt < 4:
+		print 'Using sigma: %d' % sigma
+	else:
+		sigma = float(sys.argv[3])
+	if argcnt < 5:
+		print 'Using maze from file: %s' % mazefile
+	else:
+		mazefile = sys.argv[4]
+
+
+	maze = Maze(mazefile, beaconCnt)
 
 	def rndParams():
 		x, y = maze.randomFreePlace()
@@ -198,14 +233,22 @@ def main():
 	def error(p, inputData):
 		"""p is a particle, inputData equals to robot's 'lastPointFree' field after acting"""
 		robotLastPointFree = inputData[0]
-		robotDistFromBeacon = inputData[1]
 		wallBumpingError = 0 if p.lastPointFree == robotLastPointFree else 1
-		beaconDistError = (p.distFromBeacon - robotDistFromBeacon)**2
+		if oneDistanceOnly:
+			robotDistFromBeacon = inputData[1]
+			beaconDistError = (p.distFromBeacon - robotDistFromBeacon)**2
+		else:
+			robotDistsFromBeacons = inputData[1]
+			beaconDistErrors = []
+			for i in range(len(robotDistsFromBeacons)):
+				diff = abs(robotDistsFromBeacons[i] - p.distsFromBeacons[i])
+				beaconDistErrors.append(diff)
+			beaconDistError = sum(beaconDistErrors)
 		return wallBumpingError * 100500 + beaconDistError
 	
-	
+
 	paul = Robot(rndParams(), maze)
-	pf = PFilter(2000, 500**2, paul.constParams, rndParams, error, noiser, Robot)
+	pf = PFilter(pcount, sigma**2, paul.constParams, rndParams, error, noiser, Robot)
 
 
 	cv2.namedWindow(winname, cv2.CV_WINDOW_AUTOSIZE)
@@ -215,11 +258,15 @@ def main():
 	cv2.waitKey(0)
 
 
+	i = 1
 	while True:
 		random.seed(time.time())
 		#print 'Paul moves'
 		deltaAngle = paul.act()
-		res = pf.step(deltaAngle, [paul.lastPointFree, paul.distFromBeacon])
+		beacondist = paul.distFromBeacon if oneDistanceOnly else paul.distsFromBeacons
+		res = pf.step(deltaAngle, [paul.lastPointFree, beacondist])
+		print 'step %d' % i
+		i += 1
 		#print 'step done...'
 
 
