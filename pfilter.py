@@ -37,7 +37,9 @@ class Particle(object):
 
 	def act(self, actionParams):
 		"""
-			This method shall be overriden if particle performs some action together with robot or what it is each step. If it doesn't, just leave this method as it is.
+			This method shall be overriden if particle performs 
+			some action together with robot or what it is each step. 
+			If it doesn't, just leave this method as it is.
 		"""
 		pass
 		
@@ -45,7 +47,8 @@ class Particle(object):
 	@abc.abstractproperty
 	def params(self):
 		"""
-			This property must get parameter list from child's attributes and set child's attributes given such a parameter list
+			This property must get parameter list from child's attributes 
+			and set child's attributes given such a parameter list
 		"""
 		pass
 	
