@@ -273,7 +273,7 @@ def main():
 		draw(img, paul, pf.particles)
 		cv2.imshow(winname, img)
 		#print 'wait...'
-		cv2.waitKey(15)
+		cv2.waitKey(0)
 		#print 'continue'
 
 	cv2.waitKey(0)
